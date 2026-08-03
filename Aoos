@@ -1,0 +1,227 @@
+-- โหลด Rayfield UI Library
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- สร้าง หน้าต่าง UI หลัก
+local Window = Rayfield:CreateWindow({
+   Name = "ระบบฟาร์ม🌾 เครดิตคนทำ:บังเจษ🔥",
+   LoadingTitle = "กำลังโหลดระบบฟาร์ม...",
+   LoadingSubtitle = "โดย บังเจษ🔥",
+   ConfigurationSaving = {
+      Enabled = true,
+      FolderName = "BangJedFarmConfig",
+      FileName = "FarmScript"
+   },
+   Discord = { Enabled = false },
+   KeySystem = false
+})
+
+-- ตัวแปรระบบ
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local LocalPlayer = Players.LocalPlayer
+
+local AutoFarmEnabled = false
+local AntiAFKEnabled = false
+local FarmSpeed = 0.3          -- ความเร็วในการเก็บเกี่ยวปกติ
+local WaitWhenEmpty = 60       -- เวลารอเมื่อเก็บหมด (ค่าเริ่มต้น 60 วินาที)
+local NoclipConnection = nil
+local AntiAFKConnection = nil
+
+-- ฟังก์ชัน Noclip ป้องกันตัวละครติดบล็อก/บัคขณะวาร์ป
+local function SetNoclip(enabled)
+   if enabled then
+      if not NoclipConnection then
+         NoclipConnection = RunService.Stepped:Connect(function()
+            if LocalPlayer.Character then
+               for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                  if part:IsA("BasePart") and part.CanCollide then
+                     part.CanCollide = false
+                  end
+               end
+            end
+         end)
+      end
+   else
+      if NoclipConnection then
+         NoclipConnection:Disconnect()
+         NoclipConnection = nil
+      end
+   end
+end
+
+-- ฟังก์ชันค้นหาจุดเก็บเกี่ยว (ProximityPrompt) ที่ใกล้ที่สุดแบบปลอดภัย
+local function GetClosestCropPrompt()
+   local closestPrompt = nil
+   local shortestDistance = math.huge
+   
+   if not (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")) then
+      return nil
+   end
+   
+   local hrpPosition = LocalPlayer.Character.HumanoidRootPart.Position
+
+   for _, desc in pairs(Workspace:GetDescendants()) do
+      if desc:IsA("ProximityPrompt") and desc.Enabled then
+         local targetPart = desc.Parent
+         if targetPart and targetPart:IsA("BasePart") then
+            local dist = (targetPart.Position - hrpPosition).Magnitude
+            if dist < shortestDistance then
+               shortestDistance = dist
+               closestPrompt = desc
+            end
+         elseif targetPart and targetPart:IsA("Model") and targetPart.PrimaryPart then
+            local dist = (targetPart.PrimaryPart.Position - hrpPosition).Magnitude
+            if dist < shortestDistance then
+               shortestDistance = dist
+               closestPrompt = desc
+            end
+         end
+      end
+   end
+   return closestPrompt
+end
+
+-- สร้าง Tab สำหรับระบบฟาร์ม
+local FarmTab = Window:CreateTab("🌾 ระบบฟาร์มหลัก", 4483362458)
+
+-- ปุ่ม Toggle เปิด/ปิด Auto Farm
+local FarmToggle = FarmTab:CreateToggle({
+   Name = "เปิดระบบ Auto Farm (วาร์ปหา + เกี่ยวอัตโนมัติ) 🌾",
+   CurrentValue = false,
+   Flag = "AutoFarmToggle",
+   Callback = function(Value)
+      AutoFarmEnabled = Value
+      SetNoclip(Value)
+      
+      if Value then
+         Rayfield:Notify({
+            Title = "ระบบฟาร์ม",
+            Content = "เริ่มระบบวาร์ปเก็บเกี่ยวอัตโนมัติแล้ว!",
+            Duration = 2,
+            Image = 4483362458,
+         })
+      end
+   end,
+})
+
+-- ปุ่ม Toggle เปิด/ปิด Anti-AFK กันหลุด
+local AntiAFKToggle = FarmTab:CreateToggle({
+   Name = "เปิดระบบ Anti-AFK (กันเกมหลุดเมื่อยืนนาน) 🛡️",
+   CurrentValue = false,
+   Flag = "AntiAFKToggle",
+   Callback = function(Value)
+      AntiAFKEnabled = Value
+      if Value then
+         if not AntiAFKConnection then
+            AntiAFKConnection = LocalPlayer.Idled:Connect(function()
+               VirtualUser:CaptureController()
+               VirtualUser:ClickButton2(Vector2.new(0, 0))
+            end)
+         end
+         Rayfield:Notify({
+            Title = "Anti-AFK",
+            Content = "เปิดระบบกันเกมหลุดแล้ว!",
+            Duration = 2,
+            Image = 4483362458,
+         })
+      else
+         if AntiAFKConnection then
+            AntiAFKConnection:Disconnect()
+            AntiAFKConnection = nil
+         end
+      end
+   end,
+})
+
+-- สไลเดอร์ปรับความเร็วในการวาร์ปเก็บ (ปุ่มแยก)
+local SpeedSlider = FarmTab:CreateSlider({
+   Name = "ความเร็วในการฟาร์ม/วาร์ป (วินาที)",
+   Range = {0.1, 2},
+   Increment = 0.1,
+   Suffix = "วิ",
+   CurrentValue = 0.3,
+   Flag = "FarmSpeedSlider",
+   Callback = function(Value)
+      FarmSpeed = Value
+   end,
+})
+
+-- สไลเดอร์ปรับเวลารอเมื่อผลผลิตหมด (ปุ่มแยก)
+local WaitSlider = FarmTab:CreateSlider({
+   Name = "เวลารอเมื่อเก็บของหมด (วินาที)",
+   Range = {10, 300},
+   Increment = 5,
+   Suffix = "วิ",
+   CurrentValue = 60,
+   Flag = "WaitWhenEmptySlider",
+   Callback = function(Value)
+      WaitWhenEmpty = Value
+   end,
+})
+
+-- Tab ข้อมูลและวิธีใช้งาน
+local CreditTab = Window:CreateTab("ℹ️ ข้อมูล", 4483334699)
+
+CreditTab:CreateSection("📖 วิธีใช้งานสคริปต์")
+CreditTab:CreateLabel("1. ถือเคี่ยว (หรืออุปกรณ์เกี่ยว) ในมือ")
+CreditTab:CreateLabel("2. เดินไปตรงบริเวณสวนข้าว/จุดฟาร์ม")
+CreditTab:CreateLabel("3. กดเปิดปุ่ม 'Auto Farm' ระบบจะทำการฟาร์มและวาร์ปให้อัตโนมัติ")
+CreditTab:CreateLabel("4. สามารถเปิด 'Anti-AFK' ไว้เพื่อป้องกันเกมตัดเชื่อมต่อ")
+
+CreditTab:CreateSection("👑 เครดิตผู้พัฒนา")
+CreditTab:CreateLabel("ผู้สร้าง: บังเจษ🔥")
+CreditTab:CreateLabel("เวอร์ชัน: ระบบฟาร์มสมบูรณ์แบบ (Anti-Bug & Anti-AFK)")
+
+-- ==========================================
+-- ลูปการทำงานหลัก (Auto Teleport & Harvest Loop)
+-- ==========================================
+task.spawn(function()
+   while true do
+      task.wait(FarmSpeed)
+      if AutoFarmEnabled then
+         pcall(function()
+            local character = LocalPlayer.Character
+            if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+            
+            local hrp = character.HumanoidRootPart
+            local targetPrompt = GetClosestCropPrompt()
+
+            if targetPrompt and targetPrompt.Parent then
+               local targetPart = targetPrompt.Parent:IsA("BasePart") and targetPrompt.Parent or targetPrompt.Parent.PrimaryPart
+               
+               if targetPart then
+                  -- 1. วาร์ปไปตำแหน่งเหนือผลผลิตเล็กน้อย
+                  hrp.CFrame = targetPart.CFrame * CFrame.new(0, 2.5, 0)
+                  
+                  -- 2. สั่งกด ProximityPrompt เพื่อเกี่ยวทันที
+                  fireproximityprompt(targetPrompt, 0)
+                  
+                  -- 3. สั่งใช้งาน Tool/คลิกฟัน
+                  VirtualUser:CaptureController()
+                  VirtualUser:ClickButton1(Vector2.new(0, 0))
+                  
+                  if character:FindFirstChildOfClass("Tool") then
+                     character:FindFirstChildOfClass("Tool"):Activate()
+                  end
+               end
+            else
+               -- เมื่อเก็บหมดแล้วจะหยุดรอตามเวลาที่ตั้งไว้
+               Rayfield:Notify({
+                  Title = "สถานะฟาร์ม",
+                  Content = "เก็บผลผลิตหมดแล้ว! กำลังรอ " .. WaitWhenEmpty .. " วินาทีเพื่อให้เกิดใหม่...",
+                  Duration = 3,
+                  Image = 4483362458,
+               })
+               
+               local elapsed = 0
+               while elapsed < WaitWhenEmpty and AutoFarmEnabled do
+                  task.wait(1)
+                  elapsed = elapsed + 1
+               end
+            end
+         end)
+      end
+   end
+end)
